@@ -1,4 +1,3 @@
-use crate::buffer::Replicate;
 use crate::control::{Controlled, ControlledBy};
 #[cfg(feature = "interpolation")]
 use crate::prelude::InterpolationTarget;
@@ -10,7 +9,6 @@ use lightyear_connection::host::HostClient;
 use lightyear_core::interpolation::Interpolated;
 #[cfg(feature = "prediction")]
 use lightyear_core::prediction::Predicted;
-
 // impl ControlledBy {
 //     /// In Host-Server mode, any entity that is marked as ControlledBy the host
 //     /// should also have Controlled assigned to them
@@ -33,11 +31,10 @@ pub struct HostServerPlugin;
 #[derive(QueryData)]
 struct HostServerQueryData {
     entity: Entity,
-    replicate: Ref<'static, Replicate>,
     #[cfg(feature = "prediction")]
-    prediction: Option<&'static PredictionTarget>,
+    prediction: Option<Ref<'static, PredictionTarget>>,
     #[cfg(feature = "interpolation")]
-    interpolation: Option<&'static InterpolationTarget>,
+    interpolation: Option<Ref<'static, InterpolationTarget>>,
     controlled: Option<Ref<'static, ControlledBy>>,
 }
 
@@ -55,26 +52,30 @@ impl HostServerPlugin {
         query.iter().for_each(|d| {
             // also insert [`Controlled`] on the entity if it's controlled by the local client
             if let Some(controlled_by) = d.controlled {
-                if controlled_by.is_changed() && controlled_by.owner == local_entity {
+                if controlled_by.is_changed()  && controlled_by.owner == local_entity {
                     commands
-                        .entity(local_entity)
-                        .insert(Controlled);
+                        .entity(d.entity)
+                        // NOTE: do not replicate this Controlled to other clients, or they will
+                        // think they control this entity
+                        .insert((
+                            Controlled,
+                            // ComponentReplicationOverrides::<Controlled>::default()
+                            //     .disable_for(local_entity)
+                        ));
                 }
             }
-            if d.replicate.is_changed() && d.replicate.senders.contains(&local_entity) {
-                #[cfg(feature = "prediction")]
-                if d.prediction.is_some_and(|p| p.senders.contains(&local_entity)) {
-                    commands.entity(d.entity).insert(Predicted {
-                        confirmed_entity: Some(d.entity)
-                    });
-                }
-                
-                #[cfg(feature = "interpolation")]
-                if d.interpolation.is_some_and(|p| p.senders.contains(&local_entity)) {
-                    commands.entity(d.entity).insert(Interpolated {
-                        confirmed_entity: d.entity
-                    });
-                }
+            #[cfg(feature = "prediction")]
+            if d.prediction.is_some_and(|p| p.senders.contains(&local_entity)) {
+                commands.entity(d.entity).insert(Predicted {
+                    confirmed_entity: Some(d.entity)
+                });
+            }
+
+            #[cfg(feature = "interpolation")]
+            if d.interpolation.is_some_and(|p| p.senders.contains(&local_entity)) {
+                commands.entity(d.entity).insert(Interpolated {
+                    confirmed_entity: d.entity
+                });
             }
         });
     }
